@@ -16,7 +16,7 @@
 
 use core::mem;
 
-use bitvec::{vec::BitVec, store::BitStore, order::BitOrder, slice::BitSlice, boxed::BitBox};
+use bitvec::{vec::BitVec, store::BitStore, order::BitOrder, slice::BitSlice, boxed::BitBox, index::BitRegister};
 use byte_slice_cast::{AsByteSlice, ToByteSlice, FromByteSlice, Error as FromByteSliceError};
 
 use crate::codec::{Encode, Decode, Input, Output, Error, read_vec_from_u8s};
@@ -36,7 +36,7 @@ impl From<FromByteSliceError> for Error {
 
 impl<O: BitOrder, T: BitStore + ToByteSlice> Encode for BitSlice<O, T> {
 	fn encode_to<W: Output>(&self, dest: &mut W) {
-		self.to_vec().encode_to(dest)
+		self.to_bitvec().encode_to(dest)
 	}
 }
 
@@ -54,7 +54,7 @@ impl<O: BitOrder, T: BitStore + ToByteSlice> Encode for BitVec<O, T> {
 
 impl<O: BitOrder, T: BitStore + ToByteSlice> EncodeLike for BitVec<O, T> {}
 
-impl<O: BitOrder, T: BitStore + FromByteSlice> Decode for BitVec<O, T> {
+impl<O: BitOrder, T: BitStore + BitRegister + FromByteSlice> Decode for BitVec<O, T> {
 	fn decode<I: Input>(input: &mut I) -> Result<Self, Error> {
 		<Compact<u32>>::decode(input).and_then(move |Compact(bits)| {
 			let bits = bits as usize;
@@ -62,7 +62,8 @@ impl<O: BitOrder, T: BitStore + FromByteSlice> Decode for BitVec<O, T> {
 
 			let vec = read_vec_from_u8s(input, required_bytes)?;
 
-			let mut result = Self::from_slice(T::from_byte_slice(&vec)?);
+			let bitslice = BitSlice::from_slice(T::from_byte_slice(&vec)?).expect("bitslice");
+			let mut result = Self::from_bitslice(bitslice);
 			assert!(bits <= result.len());
 			unsafe { result.set_len(bits); }
 			Ok(result)
@@ -78,7 +79,7 @@ impl<O: BitOrder, T: BitStore + ToByteSlice> Encode for BitBox<O, T> {
 
 impl<O: BitOrder, T: BitStore + ToByteSlice> EncodeLike for BitBox<O, T> {}
 
-impl<O: BitOrder, T: BitStore + FromByteSlice> Decode for BitBox<O, T> {
+impl<O: BitOrder, T: BitStore + FromByteSlice + BitRegister> Decode for BitBox<O, T> {
 	fn decode<I: Input>(input: &mut I) -> Result<Self, Error> {
 		Ok(Self::from_bitslice(BitVec::<O, T>::decode(input)?.as_bitslice()))
 	}
@@ -158,6 +159,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg_attr(miri, ignore)] // slow
 	fn bitvec_u8() {
 		for v in &test_data!(u8) {
 			let encoded = v.encode();
@@ -166,6 +168,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg_attr(miri, ignore)] // broken buffer alignment assumptions
 	fn bitvec_u16() {
 		for v in &test_data!(u16) {
 			let encoded = v.encode();
@@ -174,6 +177,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg_attr(miri, ignore)] // broken buffer alignment assumptions
 	fn bitvec_u32() {
 		for v in &test_data!(u32) {
 			let encoded = v.encode();
@@ -182,6 +186,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg_attr(miri, ignore)] // broken buffer alignment assumptions
 	fn bitvec_u64() {
 		for v in &test_data!(u64) {
 			let encoded = dbg!(v.encode());
@@ -192,7 +197,7 @@ mod tests {
 	#[test]
 	fn bitslice() {
 		let data: &[u8] = &[0x69];
-		let slice = BitSlice::<Msb0, u8>::from_slice(data);
+		let slice = BitSlice::<Msb0, u8>::from_slice(data).unwrap();
 		let encoded = slice.encode();
 		let decoded = BitVec::<Msb0, u8>::decode(&mut &encoded[..]).unwrap();
 		assert_eq!(slice, decoded.as_bitslice());
@@ -201,7 +206,8 @@ mod tests {
 	#[test]
 	fn bitbox() {
 		let data: &[u8] = &[5, 10];
-		let bb = BitBox::<Msb0, u8>::from_slice(data);
+		let slice = BitSlice::from_slice(data).unwrap();
+		let bb = BitBox::<Msb0, u8>::from_bitslice(slice);
 		let encoded = bb.encode();
 		let decoded = BitBox::<Msb0, u8>::decode(&mut &encoded[..]).unwrap();
 		assert_eq!(bb, decoded);
