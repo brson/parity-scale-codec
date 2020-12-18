@@ -156,6 +156,7 @@ mod tests {
 	use std::collections::VecDeque;
 
 	#[test]
+	#[cfg_attr(miri, ignore)] // slow
 	fn vec_encode_append_works() {
 		let max_value = 1_000_000;
 
@@ -168,6 +169,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg_attr(miri, ignore)] // slow
 	fn vec_encode_append_multiple_items_works() {
 		let max_value = 1_000_000u32;
 
@@ -184,6 +186,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg_attr(miri, ignore)] // slow
 	fn vecdeque_encode_append_works() {
 		let max_value = 1_000_000;
 
@@ -196,6 +199,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg_attr(miri, ignore)] // slow
 	fn vecdeque_encode_append_multiple_items_works() {
 		let max_value = 1_000_000u32;
 
@@ -239,6 +243,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg_attr(miri, ignore)] // slow
 	fn vec_encode_like_append_works() {
 		let max_value = 1_000_000;
 
