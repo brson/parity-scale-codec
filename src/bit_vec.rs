@@ -17,7 +17,7 @@
 use core::mem;
 
 use bitvec::{vec::BitVec, store::BitStore, order::BitOrder, slice::BitSlice, boxed::BitBox, index::BitRegister};
-use byte_slice_cast::{AsByteSlice, ToByteSlice, FromByteSlice, Error as FromByteSliceError};
+use byte_slice_cast::{AsByteSlice, ToByteSlice, FromByteSlice, Error as FromByteSliceError, ToMutByteSlice};
 
 use crate::codec::{Encode, Decode, Input, Output, Error, read_vec_from_u8s};
 use crate::compact::Compact;
@@ -54,15 +54,17 @@ impl<O: BitOrder, T: BitStore + ToByteSlice> Encode for BitVec<O, T> {
 
 impl<O: BitOrder, T: BitStore + ToByteSlice> EncodeLike for BitVec<O, T> {}
 
-impl<O: BitOrder, T: BitStore + BitRegister + FromByteSlice> Decode for BitVec<O, T> {
+impl<O: BitOrder, T: BitStore + BitRegister + FromByteSlice + ToMutByteSlice + ToByteSlice> Decode for BitVec<O, T> {
 	fn decode<I: Input>(input: &mut I) -> Result<Self, Error> {
 		<Compact<u32>>::decode(input).and_then(move |Compact(bits)| {
 			let bits = bits as usize;
 			let required_bytes = required_bytes::<T>(bits);
+			let required_items = required_bytes / mem::size_of::<T>();
 
-			let vec = read_vec_from_u8s(input, required_bytes)?;
+			let vec = read_vec_from_u8s::<_, T>(input, required_items)?;
+			let slice = vec.as_byte_slice();
 
-			let bitslice = BitSlice::from_slice(T::from_byte_slice(&vec)?).expect("bitslice");
+			let bitslice = BitSlice::from_slice(T::from_byte_slice(slice)?).expect("bitslice");
 			let mut result = Self::from_bitslice(bitslice);
 			assert!(bits <= result.len());
 			unsafe { result.set_len(bits); }
@@ -79,7 +81,7 @@ impl<O: BitOrder, T: BitStore + ToByteSlice> Encode for BitBox<O, T> {
 
 impl<O: BitOrder, T: BitStore + ToByteSlice> EncodeLike for BitBox<O, T> {}
 
-impl<O: BitOrder, T: BitStore + FromByteSlice + BitRegister> Decode for BitBox<O, T> {
+impl<O: BitOrder, T: BitStore + FromByteSlice + BitRegister + ToMutByteSlice + ToByteSlice> Decode for BitBox<O, T> {
 	fn decode<I: Input>(input: &mut I) -> Result<Self, Error> {
 		Ok(Self::from_bitslice(BitVec::<O, T>::decode(input)?.as_bitslice()))
 	}
@@ -98,8 +100,8 @@ mod tests {
 	use crate::codec::MAX_PREALLOCATION;
 
 	macro_rules! test_data {
-		($inner_type:ident) => (
-			[
+		($inner_type:ident) => {{
+			let mut items = vec![
 				BitVec::<Msb0, $inner_type>::new(),
 				bitvec![Msb0, $inner_type; 0],
 				bitvec![Msb0, $inner_type; 1],
@@ -123,12 +125,17 @@ mod tests {
 				bitvec![Msb0, $inner_type; 0; 63],
 				bitvec![Msb0, $inner_type; 1; 64],
 				bitvec![Msb0, $inner_type; 0; 65],
-				bitvec![Msb0, $inner_type; 1; MAX_PREALLOCATION * 8 + 1],
-				bitvec![Msb0, $inner_type; 0; MAX_PREALLOCATION * 9],
-				bitvec![Msb0, $inner_type; 1; MAX_PREALLOCATION * 32 + 1],
-				bitvec![Msb0, $inner_type; 0; MAX_PREALLOCATION * 33],
-			]
-		)
+			];
+			if !cfg!(miri) { // too slow under miri
+				items.extend(vec![
+					bitvec![Msb0, $inner_type; 1; MAX_PREALLOCATION * 8 + 1],
+					bitvec![Msb0, $inner_type; 0; MAX_PREALLOCATION * 9],
+					bitvec![Msb0, $inner_type; 1; MAX_PREALLOCATION * 32 + 1],
+					bitvec![Msb0, $inner_type; 0; MAX_PREALLOCATION * 33],
+				]);
+			}
+			items
+		}}
 	}
 
 	#[test]
@@ -159,7 +166,6 @@ mod tests {
 	}
 
 	#[test]
-	#[cfg_attr(miri, ignore)] // slow
 	fn bitvec_u8() {
 		for v in &test_data!(u8) {
 			let encoded = v.encode();
@@ -168,7 +174,6 @@ mod tests {
 	}
 
 	#[test]
-	#[cfg_attr(miri, ignore)] // broken buffer alignment assumptions
 	fn bitvec_u16() {
 		for v in &test_data!(u16) {
 			let encoded = v.encode();
@@ -177,7 +182,6 @@ mod tests {
 	}
 
 	#[test]
-	#[cfg_attr(miri, ignore)] // broken buffer alignment assumptions
 	fn bitvec_u32() {
 		for v in &test_data!(u32) {
 			let encoded = v.encode();
@@ -186,7 +190,6 @@ mod tests {
 	}
 
 	#[test]
-	#[cfg_attr(miri, ignore)] // broken buffer alignment assumptions
 	fn bitvec_u64() {
 		for v in &test_data!(u64) {
 			let encoded = dbg!(v.encode());
